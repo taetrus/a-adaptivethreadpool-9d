@@ -156,9 +156,43 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         });
         dispatcher.start();
     }
-    // ----- Task 8 fills these -----
-    private void startTickPull() { throw new UnsupportedOperationException("Task 8"); }
-    private void startPeriodicUi() { throw new UnsupportedOperationException("Task 8"); }
+    private void startPeriodicUi() {
+        scheduler = Executors.newSingleThreadScheduledExecutor(
+                daemonFactory("datapipeline-scheduler", 0));
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                R r = latestResult.getAndSet(null);
+                if (r != null) publisher.publish(r);
+            } catch (Throwable t) {
+                safeError(t, null);
+            }
+        }, uiMode.periodMillis(), uiMode.periodMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private void startTickPull() {
+        scheduler = Executors.newSingleThreadScheduledExecutor(
+                daemonFactory("datapipeline-scheduler", 0));
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                T item = intake.poll();
+                if (item == null) return;
+                R result;
+                try {
+                    result = processor.apply(item);
+                } catch (Throwable t) {
+                    safeError(t, item);
+                    return;
+                }
+                if (result == null) {
+                    safeError(new NullPointerException("processor returned null"), item);
+                    return;
+                }
+                publisher.publish(result);
+            } catch (Throwable t) {
+                safeError(t, null);
+            }
+        }, uiMode.periodMillis(), uiMode.periodMillis(), TimeUnit.MILLISECONDS);
+    }
 
     @Override public boolean submit(T item) {
         if (closed) return false;
