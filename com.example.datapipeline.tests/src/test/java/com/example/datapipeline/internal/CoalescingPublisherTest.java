@@ -53,4 +53,10 @@ public class CoalescingPublisherTest {
         p.publish("a");
         edt.runAll(); // must not throw
     }
+
+    @Test(expected = NullPointerException.class)
+    public void publishNullThrows() {
+        ManualExecutor edt = new ManualExecutor();
+        new CoalescingPublisher<String>(edt, s -> {}, (t, i) -> {}).publish(null);
+    }
 }

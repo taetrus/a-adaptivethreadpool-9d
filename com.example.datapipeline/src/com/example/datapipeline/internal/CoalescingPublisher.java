@@ -9,6 +9,9 @@ import com.example.datapipeline.api.ErrorHandler;
 /**
  * Publishes results to the UI executor with at most one pending runnable:
  * if the EDT hasn't run the previous one yet, the pending value is swapped instead.
+ *
+ * Note: null is used as the internal empty sentinel; callers must not publish null results.
+ * Null results are filtered upstream in the pipeline.
  */
 final class CoalescingPublisher<R> {
     private final Executor uiExecutor;
@@ -23,6 +26,7 @@ final class CoalescingPublisher<R> {
     }
 
     void publish(R result) {
+        java.util.Objects.requireNonNull(result, "result must not be null");
         if (pending.getAndSet(result) == null) {
             uiExecutor.execute(this::drain);
         }
