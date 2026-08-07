@@ -62,9 +62,12 @@ public class BuilderValidationTest {
     }
 
     @Test public void parallelWithLatestWinsDegradesToSequentialWithoutError() {
-        DataPipeline<String, String> p =
-                valid().executionMode(ExecutionMode.parallelOrdered(4)).build();
+        DataPipeline.Builder<String, String> b =
+                valid().executionMode(ExecutionMode.parallelOrdered(4));
+        DataPipeline<String, String> p = b.build();
         assertNotNull(p);
+        assertFalse("parallel + LATEST_WINS must degrade to sequential",
+                b.getExecutionMode().isParallel());
         p.close();
     }
 
