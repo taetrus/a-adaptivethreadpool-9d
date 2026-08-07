@@ -158,7 +158,7 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
     }
     private void startPeriodicUi() {
         scheduler = Executors.newSingleThreadScheduledExecutor(
-                daemonFactory("datapipeline-scheduler", 0));
+                r -> newDaemon("datapipeline-scheduler", r));
         scheduler.scheduleAtFixedRate(() -> {
             try {
                 R r = latestResult.getAndSet(null);
@@ -171,7 +171,7 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
 
     private void startTickPull() {
         scheduler = Executors.newSingleThreadScheduledExecutor(
-                daemonFactory("datapipeline-scheduler", 0));
+                r -> newDaemon("datapipeline-scheduler", r));
         scheduler.scheduleAtFixedRate(() -> {
             try {
                 T item = intake.poll();
