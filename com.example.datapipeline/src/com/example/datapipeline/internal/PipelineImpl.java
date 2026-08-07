@@ -116,8 +116,46 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         catch (Throwable h) { LOG.log(Level.WARNING, "onError handler threw", h); }
     }
 
-    // ----- Task 7 fills these -----
-    private void startParallel() { throw new UnsupportedOperationException("Task 7"); }
+    private void startParallel() {
+        final Resequencer<R> resequencer = new Resequencer<R>();
+        pool = Executors.newFixedThreadPool(execMode.threadCount(),
+                daemonFactory("datapipeline-worker-", 0));
+        dispatcher = newDaemon("datapipeline-dispatcher", () -> {
+            long seq = 0;
+            while (!closed) {
+                final T item;
+                try { item = intake.take(); } catch (InterruptedException e) { return; }
+                final long mySeq = seq++;
+                try {
+                    pool.execute(() -> {
+                        R result = null;
+                        Throwable failure = null;
+                        try {
+                            result = processor.apply(item);
+                            if (result == null) failure = new NullPointerException("processor returned null");
+                        } catch (Throwable t) {
+                            failure = t;
+                        }
+                        if (failure != null) safeError(failure, item);
+                        // Emission must stay inside the resequencer monitor so results reach the
+                        // UI stage serialized in sequence order — CoalescingPublisher assumes a
+                        // single producer at a time; concurrent emit() calls from multiple pool
+                        // threads can silently drop results. accept/skip are themselves
+                        // synchronized on `resequencer`, so this outer lock is reentrant.
+                        synchronized (resequencer) {
+                            java.util.List<R> releasable = (failure != null)
+                                    ? resequencer.skip(mySeq)
+                                    : resequencer.accept(mySeq, result);
+                            for (R r : releasable) emit(r);
+                        }
+                    });
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    return; // pool shut down during close()
+                }
+            }
+        });
+        dispatcher.start();
+    }
     // ----- Task 8 fills these -----
     private void startTickPull() { throw new UnsupportedOperationException("Task 8"); }
     private void startPeriodicUi() { throw new UnsupportedOperationException("Task 8"); }
