@@ -1,2 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- populated in Task 10 -->
+<scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.3.0"
+               name="com.example.datapipeline.factory"
+               deactivate="deactivate">
+  <implementation class="com.example.datapipeline.internal.PipelineFactoryComponent"/>
+  <service>
+    <provide interface="com.example.datapipeline.api.PipelineFactory"/>
+  </service>
+</scr:component>
