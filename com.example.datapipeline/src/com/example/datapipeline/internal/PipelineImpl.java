@@ -203,27 +203,30 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
     @Override public void close() {
         if (closed) return;
         closed = true;
-        if (scheduler != null) shutdown(scheduler);
-        if (pool != null) shutdown(pool);
+        long deadline = System.currentTimeMillis() + CLOSE_WAIT_MS;
+        if (scheduler != null) shutdown(scheduler, deadline);
+        if (pool != null) shutdown(pool, deadline);
         if (dispatcher != null) dispatcher.interrupt();
         if (worker != null) worker.interrupt();
-        join(dispatcher);
-        join(worker);
+        join(dispatcher, deadline);
+        join(worker, deadline);
     }
 
-    private static void shutdown(ExecutorService es) {
+    private static void shutdown(ExecutorService es, long deadline) {
         es.shutdown();
         try {
-            if (!es.awaitTermination(CLOSE_WAIT_MS, TimeUnit.MILLISECONDS)) es.shutdownNow();
+            if (!es.awaitTermination(Math.max(1, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)) {
+                es.shutdownNow();
+            }
         } catch (InterruptedException e) {
             es.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
 
-    private static void join(Thread t) {
+    private static void join(Thread t, long deadline) {
         if (t == null) return;
-        try { t.join(CLOSE_WAIT_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { t.join(Math.max(1, deadline - System.currentTimeMillis())); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     static Thread newDaemon(String name, Runnable r) {
