@@ -28,9 +28,9 @@ Choose how the pipeline handles a backlog when processing cannot keep up with in
 
 ### PROCESS_ALL
 
-Unbuffered queue with configurable capacity. When full, the oldest item is dropped and `onOverflow(droppedItem)` is called (default: logged). Favors fresh data; good for scenarios where you prefer to lose old samples and always process the newest ones.
+Bounded buffered queue with configurable capacity (default 1024). When full, the oldest item is dropped and `onOverflow(droppedItem)` is called (default: logged). Favors fresh data; good for scenarios where you prefer to lose old samples and always process the newest ones.
 
-- Requires: `bufferCapacity(capacity)` must be set.
+- Requires: `bufferCapacity(capacity)` to set the queue size.
 - Optional: `onOverflow(dropped -> ...)` callback for dropped items.
 
 ### LATEST_WINS
@@ -110,39 +110,44 @@ The builder logs a warning and adjusts behavior automatically in the following c
 
 ### PARALLEL_ORDERED + LATEST_WINS or CONFLATE
 
-When you combine parallel execution with an overflow policy that holds at most one pending item, parallelism cannot help. At most one item is ever awaiting processing, so multiple worker threads are idle. The builder logs a warning and runs effectively as SEQUENTIAL (one item, one thread, parallelism unused).
+When you combine parallel execution with an overflow policy that holds at most one pending item, parallelism cannot help. At most one item is ever awaiting processing, so multiple worker threads are idle. The builder logs a warning and runs effectively as SEQUENTIAL (one item, one thread, parallelism unused):
 
-```
-WARN: PARALLEL_ORDERED with LATEST_WINS|CONFLATE is degenerate (max 1 item pending); running effectively sequential
-```
+    WARNING: PARALLEL_ORDERED with LATEST_WINS/CONFLATE cannot parallelize (at most one pending item); running sequentially
 
 ### processOnlyOnTick(true) with PERIODIC mode and PARALLEL_ORDERED
 
-When `processOnlyOnTick(true)` is enabled, the periodic tick processes one item per cycle. Combined with `PARALLEL_ORDERED`, parallelism cannot help. The builder logs a warning and runs effectively sequential.
+When `processOnlyOnTick(true)` is enabled, the periodic tick processes one item per cycle. Combined with `PARALLEL_ORDERED`, parallelism cannot help. The builder logs a warning and runs effectively sequential:
 
-```
-WARN: processOnlyOnTick(true) with PARALLEL_ORDERED is degenerate; running effectively sequential
-```
+    WARNING: PARALLEL_ORDERED with processOnlyOnTick cannot parallelize; running sequentially
 
 ### processOnlyOnTick(true) without PERIODIC mode
 
-If `processOnlyOnTick(true)` is set without `UiUpdateMode.periodic(...)`, the builder throws `IllegalStateException` at build time. There is no "tick" to drive processing.
+If `processOnlyOnTick(true)` is set without `UiUpdateMode.periodic(...)`, the builder throws `IllegalStateException` at build time. There is no "tick" to drive processing:
 
-```
-java.lang.IllegalStateException: processOnlyOnTick(true) requires UiUpdateMode.periodic(ms)
-```
+    java.lang.IllegalStateException: processOnlyOnTick requires UiUpdateMode.periodic(...)
 
 ## Thread Inventory
 
-The pipeline spawns a fixed, bounded set of daemon threads, all named with the `datapipeline-` prefix:
+The pipeline spawns a fixed, bounded set of daemon threads, all named with the `datapipeline-` prefix. The exact thread count depends on the configuration:
 
-- **1 scheduler thread** (`datapipeline-scheduler`): runs periodic ticks if `UiUpdateMode.periodic(...)` is used. Always present.
-- **N worker threads** (`datapipeline-worker-0`, `datapipeline-worker-1`, ..., `datapipeline-worker-{N-1}`): process items. N = 1 for SEQUENTIAL mode, N = configured for PARALLEL_ORDERED mode.
-- **1 dispatcher thread** (`datapipeline-dispatcher`): runs only in PARALLEL_ORDERED mode. Assigns sequence numbers and distributes work to the pool.
+**Worker and Dispatcher Threads:**
+- **SEQUENTIAL mode**: 1 worker thread (`datapipeline-worker-0`)
+- **PARALLEL_ORDERED(N) mode**: N worker threads (`datapipeline-worker-0` through `datapipeline-worker-{N-1}`) plus 1 dispatcher thread (`datapipeline-dispatcher`)
+- **processOnlyOnTick(true) mode**: No separate worker or dispatcher; processing runs on the scheduler thread
 
-Total threads = 1 scheduler + N workers + (1 if PARALLEL_ORDERED, else 0) dispatcher.
+**Scheduler Thread:**
+- Created only when `UiUpdateMode.periodic(...)` or `processOnlyOnTick(true)` is used
+- `datapipeline-scheduler`: runs periodic ticks and/or drives processing in tick-pull mode
+- Not created when using `UiUpdateMode.immediate()`
 
-All threads are daemon threads and terminate when the pipeline is closed. On component deactivation, `PipelineFactory` closes all pipelines it created, guaranteeing no thread leaks across bundle restarts.
+**Total Thread Count Examples:**
+- SEQUENTIAL + immediate: 1 worker
+- SEQUENTIAL + periodic: 1 worker + 1 scheduler = 2
+- PARALLEL_ORDERED(4) + immediate: 4 workers + 1 dispatcher = 5
+- PARALLEL_ORDERED(4) + periodic: 4 workers + 1 dispatcher + 1 scheduler = 6
+- processOnlyOnTick(true): 1 scheduler only
+
+All threads are daemon threads and terminate when the pipeline is closed. `close()` allows in-flight work a bounded ~2s window to finish, then interrupts remaining threads. On component deactivation, `PipelineFactory` closes all pipelines it created, guaranteeing no thread leaks across bundle restarts.
 
 ## Building
 
