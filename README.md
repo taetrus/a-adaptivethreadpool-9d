@@ -30,7 +30,7 @@ Choose how the pipeline handles a backlog when processing cannot keep up with in
 
 Bounded buffered queue with configurable capacity (default 1024). When full, the oldest item is dropped and `onOverflow(droppedItem)` is called (default: logged). Favors fresh data; good for scenarios where you prefer to lose old samples and always process the newest ones.
 
-- Requires: `bufferCapacity(capacity)` to set the queue size.
+- Optional: `bufferCapacity(capacity)` to set the queue size (default 1024).
 - Optional: `onOverflow(dropped -> ...)` callback for dropped items.
 
 ### LATEST_WINS
@@ -91,7 +91,7 @@ A shared single-thread scheduler ticks at a fixed interval (e.g., every 100 ms).
 .uiUpdateMode(UiUpdateMode.periodic(100))  // milliseconds
 ```
 
-Good for high-frequency data where you want to throttle UI updates to a fixed frame rate.
+Good for high-frequency data where you want to throttle UI updates to a fixed frame rate. Note: `close()` stops the scheduler first, so a result that completes processing during close() may never reach a periodic tick and go undelivered.
 
 ### Process-On-Tick
 

@@ -59,4 +59,23 @@ public class CoalescingPublisherTest {
         ManualExecutor edt = new ManualExecutor();
         new CoalescingPublisher<String>(edt, s -> {}, (t, i) -> {}).publish(null);
     }
+
+    /** Always rejects the handoff, like a shut-down executor. */
+    private static final class ThrowingExecutor implements Executor {
+        @Override public void execute(Runnable r) { throw new java.util.concurrent.RejectedExecutionException("shut down"); }
+    }
+
+    @Test public void throwingExecutorRoutesToErrorHandlerAndDoesNotWedge() {
+        List<Object> failed = new ArrayList<Object>();
+        CoalescingPublisher<String> p = new CoalescingPublisher<String>(
+                new ThrowingExecutor(), s -> {}, (t, item) -> failed.add(item));
+
+        p.publish("a"); // must not throw
+        assertEquals(java.util.Arrays.asList("a"), failed);
+
+        // pending must have been cleared — a subsequent publish must also reach the error handler
+        // (proving the getAndSet(null)==null gate wasn't left permanently wedged by the first call)
+        p.publish("b");
+        assertEquals(java.util.Arrays.asList("a", "b"), failed);
+    }
 }

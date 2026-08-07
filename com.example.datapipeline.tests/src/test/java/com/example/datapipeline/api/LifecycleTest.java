@@ -67,6 +67,27 @@ public class LifecycleTest {
                 delivered.await(1, TimeUnit.SECONDS));
     }
 
+    @Test public void sequentialCloseLetsInFlightWorkFinish() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch delivered = new CountDownLatch(1);
+        DataPipeline<Integer, Integer> p = DataPipeline.<Integer, Integer>builder()
+                .processor(i -> {
+                    started.countDown();
+                    try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+                    return i;
+                })
+                .uiConsumer(i -> delivered.countDown())
+                .overflowPolicy(OverflowPolicy.PROCESS_ALL)
+                .executionMode(ExecutionMode.SEQUENTIAL)
+                .uiThreadExecutor(DIRECT)
+                .build();
+        p.submit(1);
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        p.close(); // busy worker gets joined before interrupt, letting the in-flight item finish
+        assertTrue("in-flight item should complete during close",
+                delivered.await(1, TimeUnit.SECONDS));
+    }
+
     private static Thread[] allThreads() {
         Thread[] threads = new Thread[Thread.activeCount() * 2];
         int n = Thread.enumerate(threads);

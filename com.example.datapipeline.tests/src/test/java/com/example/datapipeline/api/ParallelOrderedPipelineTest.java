@@ -36,6 +36,37 @@ public class ParallelOrderedPipelineTest {
         } finally { p.close(); }
     }
 
+    @Test public void dispatcherToPoolHandoffIsBoundedSoOverflowEngages() throws Exception {
+        final int N = 20;
+        CountDownLatch workersBlocked = new CountDownLatch(2);
+        CountDownLatch releaseWorkers = new CountDownLatch(1);
+        CountDownLatch overflowSeen = new CountDownLatch(1);
+        DataPipeline<Integer, Integer> p = DataPipeline.<Integer, Integer>builder()
+                .processor(i -> {
+                    workersBlocked.countDown();
+                    try { releaseWorkers.await(10, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+                    return i;
+                })
+                .uiConsumer(i -> {})
+                .overflowPolicy(OverflowPolicy.PROCESS_ALL)
+                .bufferCapacity(2)
+                .onOverflow(dropped -> overflowSeen.countDown())
+                .executionMode(ExecutionMode.parallelOrdered(2))
+                .uiThreadExecutor(DIRECT)
+                .build();
+        try {
+            for (int i = 0; i < N; i++) p.submit(i);
+            // wait for both workers to be saturated on the latch
+            assertTrue(workersBlocked.await(5, TimeUnit.SECONDS));
+            // with the handoff bounded, the intake must fill and the drop-oldest policy must fire
+            assertTrue("expected onOverflow to fire once the bounded handoff saturates the pool",
+                    overflowSeen.await(5, TimeUnit.SECONDS));
+        } finally {
+            releaseWorkers.countDown();
+            p.close();
+        }
+    }
+
     @Test public void failedItemDoesNotStallSubsequentResults() throws Exception {
         List<Integer> seen = Collections.synchronizedList(new ArrayList<Integer>());
         CountDownLatch done = new CountDownLatch(2);

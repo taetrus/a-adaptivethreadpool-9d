@@ -65,10 +65,25 @@ public class BuilderValidationTest {
         DataPipeline.Builder<String, String> b =
                 valid().executionMode(ExecutionMode.parallelOrdered(4));
         DataPipeline<String, String> p = b.build();
-        assertNotNull(p);
-        assertFalse("parallel + LATEST_WINS must degrade to sequential",
-                b.getExecutionMode().isParallel());
-        p.close();
+        try {
+            assertNotNull(p);
+            // The builder must not corrupt the (reusable) Builder's own executionMode field.
+            assertTrue("Builder.executionMode must remain unmutated after build()",
+                    b.getExecutionMode().isParallel());
+            // The pipeline itself must actually degrade to sequential: no dispatcher thread.
+            for (Thread t : allThreads()) {
+                assertFalse("no dispatcher thread should exist for a degraded-to-sequential pipeline",
+                        t.getName().equals("datapipeline-dispatcher") && t.isAlive());
+            }
+        } finally {
+            p.close();
+        }
+    }
+
+    private static Thread[] allThreads() {
+        Thread[] threads = new Thread[Thread.activeCount() * 2];
+        int n = Thread.enumerate(threads);
+        return java.util.Arrays.copyOf(threads, n);
     }
 
     @Test(expected = IllegalArgumentException.class)

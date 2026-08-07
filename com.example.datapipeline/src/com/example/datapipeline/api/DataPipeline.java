@@ -41,6 +41,7 @@ public interface DataPipeline<T, R> extends AutoCloseable {
                 (t, item) -> LOG.log(Level.WARNING, "Pipeline error on item: " + item, t);
         private Consumer<T> onOverflow;
         private Executor uiThreadExecutor = SwingUtilities::invokeLater;
+        private ExecutionMode effectiveExecutionMode;
 
         Builder() {}
 
@@ -74,15 +75,17 @@ public interface DataPipeline<T, R> extends AutoCloseable {
             if (bufferCapacitySet && bufferCapacity < 1)
                 throw new IllegalStateException("bufferCapacity must be >= 1");
 
-            if (executionMode.isParallel() && overflowPolicy != OverflowPolicy.PROCESS_ALL) {
+            ExecutionMode effective = executionMode;
+            if (effective.isParallel() && overflowPolicy != OverflowPolicy.PROCESS_ALL) {
                 LOG.warning("PARALLEL_ORDERED with " + overflowPolicy
                         + " cannot parallelize (at most one pending item); running sequentially");
-                executionMode = ExecutionMode.SEQUENTIAL;
+                effective = ExecutionMode.SEQUENTIAL;
             }
-            if (executionMode.isParallel() && processOnlyOnTick) {
+            if (effective.isParallel() && processOnlyOnTick) {
                 LOG.warning("PARALLEL_ORDERED with processOnlyOnTick cannot parallelize; running sequentially");
-                executionMode = ExecutionMode.SEQUENTIAL;
+                effective = ExecutionMode.SEQUENTIAL;
             }
+            this.effectiveExecutionMode = effective;
             return new PipelineImpl<T, R>(this);
         }
 
@@ -93,6 +96,8 @@ public interface DataPipeline<T, R> extends AutoCloseable {
         public BinaryOperator<T> getConflator() { return conflator; }
         public int getBufferCapacity() { return bufferCapacity; }
         public ExecutionMode getExecutionMode() { return executionMode; }
+        /** The mode actually used to build the pipeline (after degrading incompatible combinations). */
+        public ExecutionMode getEffectiveExecutionMode() { return effectiveExecutionMode; }
         public UiUpdateMode getUiUpdateMode() { return uiUpdateMode; }
         public boolean isProcessOnlyOnTick() { return processOnlyOnTick; }
         public ErrorHandler getErrorHandler() { return errorHandler; }

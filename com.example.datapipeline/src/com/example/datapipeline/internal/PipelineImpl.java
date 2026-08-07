@@ -32,6 +32,10 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
     private final AtomicReference<R> latestResult = new AtomicReference<R>(); // periodic mode
     private volatile boolean closed;
 
+    // Set right after intake.take() returns an item, cleared once processAndEmit completes.
+    // Benign race: close() may read this just as the worker flips idle->busy; worst case close()
+    // interrupts an item that was about to start rather than one already in flight.
+    private volatile boolean workerBusy;
     private Thread worker;                    // SEQUENTIAL
     private Thread dispatcher;                // PARALLEL_ORDERED (Task 7)
     private ExecutorService pool;             // PARALLEL_ORDERED (Task 7)
@@ -42,7 +46,7 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         this.errorHandler = b.getErrorHandler();
         this.uiMode = b.getUiUpdateMode();
         this.processOnlyOnTick = b.isProcessOnlyOnTick();
-        this.execMode = b.getExecutionMode();
+        this.execMode = b.getEffectiveExecutionMode();
         this.publisher = new CoalescingPublisher<R>(
                 b.getUiThreadExecutor(), b.getUiConsumer(), b.getErrorHandler());
         this.intake = createIntake(b);
@@ -83,7 +87,12 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         while (!closed) {
             T item;
             try { item = intake.take(); } catch (InterruptedException e) { return; }
-            processAndEmit(item);
+            workerBusy = true;
+            try {
+                processAndEmit(item);
+            } finally {
+                workerBusy = false;
+            }
         }
     }
 
@@ -120,36 +129,47 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         final Resequencer<R> resequencer = new Resequencer<R>();
         pool = Executors.newFixedThreadPool(execMode.threadCount(),
                 daemonFactory("datapipeline-worker-", 0));
+        // Bounds how many items can be handed off from intake to the pool at once. Without this,
+        // the dispatcher drains the bounded intake into the pool's unbounded work queue at full
+        // speed, so the intake never fills and PROCESS_ALL's drop-oldest/onOverflow never engage.
+        final java.util.concurrent.Semaphore inFlight =
+                new java.util.concurrent.Semaphore(execMode.threadCount() * 2);
         dispatcher = newDaemon("datapipeline-dispatcher", () -> {
             long seq = 0;
             while (!closed) {
                 final T item;
                 try { item = intake.take(); } catch (InterruptedException e) { return; }
+                try { inFlight.acquire(); } catch (InterruptedException e) { return; }
                 final long mySeq = seq++;
                 try {
                     pool.execute(() -> {
-                        R result = null;
-                        Throwable failure = null;
                         try {
-                            result = processor.apply(item);
-                            if (result == null) failure = new NullPointerException("processor returned null");
-                        } catch (Throwable t) {
-                            failure = t;
-                        }
-                        if (failure != null) safeError(failure, item);
-                        // Emission must stay inside the resequencer monitor so results reach the
-                        // UI stage serialized in sequence order — CoalescingPublisher assumes a
-                        // single producer at a time; concurrent emit() calls from multiple pool
-                        // threads can silently drop results. accept/skip are themselves
-                        // synchronized on `resequencer`, so this outer lock is reentrant.
-                        synchronized (resequencer) {
-                            java.util.List<R> releasable = (failure != null)
-                                    ? resequencer.skip(mySeq)
-                                    : resequencer.accept(mySeq, result);
-                            for (R r : releasable) emit(r);
+                            R result = null;
+                            Throwable failure = null;
+                            try {
+                                result = processor.apply(item);
+                                if (result == null) failure = new NullPointerException("processor returned null");
+                            } catch (Throwable t) {
+                                failure = t;
+                            }
+                            if (failure != null) safeError(failure, item);
+                            // Emission must stay inside the resequencer monitor so results reach the
+                            // UI stage serialized in sequence order — CoalescingPublisher assumes a
+                            // single producer at a time; concurrent emit() calls from multiple pool
+                            // threads can silently drop results. accept/skip are themselves
+                            // synchronized on `resequencer`, so this outer lock is reentrant.
+                            synchronized (resequencer) {
+                                java.util.List<R> releasable = (failure != null)
+                                        ? resequencer.skip(mySeq)
+                                        : resequencer.accept(mySeq, result);
+                                for (R r : releasable) emit(r);
+                            }
+                        } finally {
+                            inFlight.release();
                         }
                     });
                 } catch (java.util.concurrent.RejectedExecutionException e) {
+                    inFlight.release();
                     return; // pool shut down during close()
                 }
             }
@@ -207,7 +227,15 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         if (scheduler != null) shutdown(scheduler, deadline);
         if (pool != null) shutdown(pool, deadline);
         if (dispatcher != null) dispatcher.interrupt();
-        if (worker != null) worker.interrupt();
+        if (worker != null) {
+            if (workerBusy) {
+                // Let the in-flight item finish within the remaining budget before interrupting.
+                join(worker, deadline);
+                if (worker.isAlive()) worker.interrupt();
+            } else {
+                worker.interrupt();
+            }
+        }
         join(dispatcher, deadline);
         join(worker, deadline);
     }
@@ -235,7 +263,7 @@ public final class PipelineImpl<T, R> implements DataPipeline<T, R> {
         return t;
     }
 
-    /** ThreadFactory for pools; names threads datapipeline-worker-1..n. */
+    /** ThreadFactory for pools; names threads {@code <prefix>0..n-1}. */
     static ThreadFactory daemonFactory(String prefix, int startIndex) {
         final AtomicInteger idx = new AtomicInteger(startIndex);
         return r -> {

@@ -28,7 +28,15 @@ final class CoalescingPublisher<R> {
     void publish(R result) {
         java.util.Objects.requireNonNull(result, "result must not be null");
         if (pending.getAndSet(result) == null) {
-            uiExecutor.execute(this::drain);
+            try {
+                uiExecutor.execute(this::drain);
+            } catch (Throwable t) {
+                // uiExecutor rejected/failed the handoff (e.g. a shut-down executor). Clear the
+                // pending slot so the publisher doesn't wedge forever, and route the failure to
+                // the error handler instead of letting it escape the calling thread.
+                pending.set(null);
+                try { errorHandler.onError(t, result); } catch (Throwable ignored) {}
+            }
         }
     }
 
