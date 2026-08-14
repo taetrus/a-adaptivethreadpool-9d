@@ -192,7 +192,35 @@ final class DemoFrame extends JFrame {
         tickPullCheck.setEnabled(false);
     }
 
+    private void installTooltips() {
+        policyCombo.setToolTipText("<html>What happens to backlog when data arrives faster than it is processed:<br>"
+                + "<b>PROCESS_ALL</b> — bounded buffer, every item processed, oldest dropped when full<br>"
+                + "<b>LATEST_WINS</b> — single slot, new data overwrites unprocessed data<br>"
+                + "<b>CONFLATE</b> — pending ticks merged into one (watch for \"merged N ticks\")</html>");
+        execCombo.setToolTipText("<html><b>SEQUENTIAL</b> — one worker thread, in order<br>"
+                + "<b>PARALLEL_ORDERED</b> — a thread pool processes concurrently; results are<br>"
+                + "re-sequenced so the UI still sees them in submission order.<br>"
+                + "Only useful with PROCESS_ALL — other policies degrade to sequential (see console warning).</html>");
+        threadsSpinner.setToolTipText("Pool size for PARALLEL_ORDERED. Higher = more throughput while the processor is the bottleneck.");
+        uiModeCombo.setToolTipText("<html><b>IMMEDIATE</b> — every result goes to the EDT as it completes<br>"
+                + "(coalesced: if the EDT is behind, only the newest pending result is shown)<br>"
+                + "<b>PERIODIC</b> — a scheduler pushes the newest result every N ms; nothing between ticks</html>");
+        periodSpinner.setToolTipText("UI refresh period in milliseconds for PERIODIC mode.");
+        tickPullCheck.setToolTipText("<html>Inverts the flow: nothing is processed between UI ticks.<br>"
+                + "Each tick pulls the freshest data from intake, processes it once, then paints.<br>"
+                + "With LATEST_WINS: exactly one computation per UI frame. Requires PERIODIC mode.</html>");
+        rateSlider.setToolTipText("How many ticks per second the fake source emits (100–10,000). Applies live.");
+        delaySlider.setToolTipText("Artificial cost of processing one tick, in ms. At 5 ms one worker caps at ~200/s — raise the rate above that to see the overflow policy engage. Applies live.");
+        startStop.setToolTipText("Start or stop the fake data source. The pipeline itself stays up.");
+        liveValue.setToolTipText("The most recent result delivered to the Swing EDT. \"merged N ticks\" appears under CONFLATE.");
+        submittedLabel.setToolTipText("Ticks the source pushed into pipeline.submit() — per second (total).");
+        processedLabel.setToolTipText("Ticks the processor actually ran — per second (total). Under LATEST_WINS/CONFLATE this is far below submitted: stale ticks were skipped or merged, not processed.");
+        droppedLabel.setToolTipText("PROCESS_ALL only: oldest items dropped by the bounded buffer, reported via onOverflow. Always 0 for other policies — they discard by overwriting, not by overflow.");
+        uiLabel.setToolTipText("Results delivered to the EDT — per second (total). Below processed when coalescing or PERIODIC mode skips intermediate results.");
+    }
+
     private void buildUi() {
+        installTooltips();
         JPanel config = new JPanel(new GridBagLayout());
         config.setBorder(BorderFactory.createTitledBorder("Pipeline configuration"));
         GridBagConstraints c = new GridBagConstraints();
@@ -215,11 +243,14 @@ final class DemoFrame extends JFrame {
 
         JPanel stats = new JPanel(new GridLayout(2, 4, 12, 2));
         stats.setBorder(BorderFactory.createTitledBorder("Throughput"));
-        stats.add(new JLabel("submitted", SwingConstants.CENTER));
-        stats.add(new JLabel("processed", SwingConstants.CENTER));
-        stats.add(new JLabel("dropped (overflow)", SwingConstants.CENTER));
-        stats.add(new JLabel("UI updates", SwingConstants.CENTER));
-        for (JLabel l : new JLabel[] { submittedLabel, processedLabel, droppedLabel, uiLabel }) {
+        String[] headers = { "submitted", "processed", "dropped (overflow)", "UI updates" };
+        JLabel[] values = { submittedLabel, processedLabel, droppedLabel, uiLabel };
+        for (int i = 0; i < headers.length; i++) {
+            JLabel h = new JLabel(headers[i], SwingConstants.CENTER);
+            h.setToolTipText(values[i].getToolTipText());
+            stats.add(h);
+        }
+        for (JLabel l : values) {
             l.setHorizontalAlignment(SwingConstants.CENTER);
             l.setFont(l.getFont().deriveFont(Font.BOLD));
             stats.add(l);
