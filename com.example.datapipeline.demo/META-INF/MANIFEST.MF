@@ -1,0 +1,12 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: DataPipeline Demo
+Bundle-SymbolicName: com.example.datapipeline.demo
+Bundle-Version: 1.0.0.qualifier
+Bundle-RequiredExecutionEnvironment: JavaSE-1.8
+Import-Package: com.example.datapipeline.api,
+ javax.swing,
+ javax.swing.border,
+ javax.swing.event,
+ org.osgi.framework;version="[1.8,2)"
+Service-Component: OSGI-INF/component.xml

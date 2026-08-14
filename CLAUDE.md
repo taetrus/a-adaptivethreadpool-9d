@@ -40,6 +40,10 @@ Three stages, wired by `internal/PipelineImpl` from the `DataPipeline.Builder` c
 
 Manifest-first (checked-in `META-INF/MANIFEST.MF`): only `com.example.datapipeline.api` is exported; `internal` is bundle-private. DS is a hand-written `OSGI-INF/component.xml` (deliberately no annotation processing) publishing `PipelineFactory`; its `deactivate()` closes every pipeline it built. If you add API packages or rename the component class, both the manifest and component.xml must be updated by hand — nothing generates them.
 
+### Demo modules
+
+`com.example.datapipeline.demo` (manifest-first bundle, DS component consuming `PipelineFactory`) + `com.example.datapipeline.demo.launcher` (plain jar embedding Felix + SCR; run the `*-jar-with-dependencies.jar`, `-Ddemo.autostart=true` to start emitting immediately). Felix/SCR are demo-only deps. OSGi gotcha encoded in the demo manifest: `javax.*` packages get no boot delegation — every used `javax.swing.*` subpackage must be in `Import-Package` explicitly.
+
 ### Test module layout
 
 `com.example.datapipeline.tests` is a plain-jar Maven module (not an OSGi fragment, no OSGi runtime needed). It can test package-private internals because test classes sit in the same package names (`com.example.datapipeline.internal`) on the plain classpath. Tests inject a synchronous executor via `Builder.uiThreadExecutor(Runnable::run)` instead of a real EDT — keep new tests headless the same way.

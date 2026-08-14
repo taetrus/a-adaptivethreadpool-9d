@@ -12,6 +12,8 @@
   <modules>
     <module>com.example.datapipeline</module>
     <module>com.example.datapipeline.tests</module>
+    <module>com.example.datapipeline.demo</module>
+    <module>com.example.datapipeline.demo.launcher</module>
   </modules>
   <repositories>
     <repository>

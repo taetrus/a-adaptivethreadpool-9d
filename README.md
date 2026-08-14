@@ -182,6 +182,17 @@ Tests run automatically during `mvn verify`. To run only tests without building:
 mvn test
 ```
 
+## Demo
+
+An interactive OSGi-launched Swing demo lives in `com.example.datapipeline.demo` (a DS bundle that receives `PipelineFactory` and opens a dashboard) plus `com.example.datapipeline.demo.launcher` (embeds Apache Felix + SCR and installs the bundles). A fake source emits ticks at an adjustable rate (100–10,000/s) through an adjustable-delay processor; the window shows submitted/processed/dropped/UI-updates per second while you switch overflow policy, execution mode, and UI delivery mode live.
+
+```bash
+mvn verify
+java -jar com.example.datapipeline.demo.launcher/target/com.example.datapipeline.demo.launcher-1.0.0-SNAPSHOT-jar-with-dependencies.jar
+```
+
+Pass `-Ddemo.autostart=true` to start the tick source immediately. Closing the window stops the OSGi framework, which deactivates the demo component and closes its pipeline. The Felix/SCR jars are demo-only dependencies — the library itself still has none.
+
 ## License
 
 Refer to the license file in this repository.
