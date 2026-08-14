@@ -153,18 +153,18 @@ All threads are daemon threads and terminate when the pipeline is closed. `close
 
 ### Requirements
 
-- **Maven 3.6+** with **JDK 11–17** (JDK 21 is not supported; Tycho 2.7.5 fails on JavaSE-21)
-- The library bundle targets **Java 8** (OSGI `Bundle-RequiredExecutionEnvironment: JavaSE-1.8`); you can run the compiled bundle on Java 8+, but Maven must run on JDK 11–17
+- **Maven 3.9+** with **JDK 21+** (Tycho 5.0.3 requires a Java 21 runtime)
+- The library bundle targets **Java 8** (OSGI `Bundle-RequiredExecutionEnvironment: JavaSE-1.8`); you can run the compiled bundle on Java 8+, but Maven must run on JDK 21+
 
 ### Setup
 
-Set `JAVA_HOME` to JDK 11–17:
+Set `JAVA_HOME` to JDK 21+:
 
 ```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 ```
 
-(Adjust the version number if you prefer JDK 11–16. On Linux, use your system's Java path.)
+(On Linux, use your system's Java 21+ path.)
 
 ### Build
 

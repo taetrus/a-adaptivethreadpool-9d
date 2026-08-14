@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test
 
-Tycho 2.7.5 requires the Maven JVM to be JDK 11–17 (it fails on JDK 21+), while the bundle itself targets Java 8 (`Bundle-RequiredExecutionEnvironment: JavaSE-1.8`). On this machine:
+Tycho 5.0.3 requires the Maven JVM to be JDK 21+, while the bundle itself targets Java 8 (`Bundle-RequiredExecutionEnvironment: JavaSE-1.8`). On this machine:
 
 ```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 mvn -q verify                                        # full build: bundle jar + all tests
 mvn -q -pl com.example.datapipeline.tests -am test   # tests only
 mvn -q -pl com.example.datapipeline.tests -am test -Dtest=ResequencerTest -DfailIfNoTests=false   # single test class

@@ -64,6 +64,7 @@ final class DemoFrame extends JFrame {
     private final JLabel processedLabel = new JLabel();
     private final JLabel droppedLabel = new JLabel();
     private final JLabel uiLabel = new JLabel();
+    private final JLabel threadsLabel = new JLabel();
     private final Timer statsTimer;
 
     DemoFrame(PipelineFactory factory, Runnable onClose) {
@@ -217,6 +218,9 @@ final class DemoFrame extends JFrame {
         processedLabel.setToolTipText("Ticks the processor actually ran — per second (total). Under LATEST_WINS/CONFLATE this is far below submitted: stale ticks were skipped or merged, not processed.");
         droppedLabel.setToolTipText("PROCESS_ALL only: oldest items dropped by the bounded buffer, reported via onOverflow. Always 0 for other policies — they discard by overwriting, not by overflow.");
         uiLabel.setToolTipText("Results delivered to the EDT — per second (total). Below processed when coalescing or PERIODIC mode skips intermediate results.");
+        threadsLabel.setToolTipText("<html>Live JVM threads right now — total (of which <b>datapipeline-*</b>).<br>"
+                + "The pipeline's count is bounded by construction and set at build time:<br>"
+                + "it never grows with load. Change the config and watch it move.</html>");
     }
 
     private void buildUi() {
@@ -241,10 +245,10 @@ final class DemoFrame extends JFrame {
         liveValue.setFont(liveValue.getFont().deriveFont(Font.BOLD, 32f));
         liveValue.setBorder(BorderFactory.createTitledBorder("Latest result"));
 
-        JPanel stats = new JPanel(new GridLayout(2, 4, 12, 2));
+        JPanel stats = new JPanel(new GridLayout(2, 5, 12, 2));
         stats.setBorder(BorderFactory.createTitledBorder("Throughput"));
-        String[] headers = { "submitted", "processed", "dropped (overflow)", "UI updates" };
-        JLabel[] values = { submittedLabel, processedLabel, droppedLabel, uiLabel };
+        String[] headers = { "submitted", "processed", "dropped (overflow)", "UI updates", "threads" };
+        JLabel[] values = { submittedLabel, processedLabel, droppedLabel, uiLabel, threadsLabel };
         for (int i = 0; i < headers.length; i++) {
             JLabel h = new JLabel(headers[i], SwingConstants.CENTER);
             h.setToolTipText(values[i].getToolTipText());
@@ -279,5 +283,16 @@ final class DemoFrame extends JFrame {
         droppedLabel.setText((d - lastDropped) + "/s  (" + d + ")");
         uiLabel.setText((u - lastUi) + "/s  (" + u + ")");
         lastSubmitted = s; lastProcessed = pr; lastDropped = d; lastUi = u;
+        threadsLabel.setText(countThreads());
+    }
+
+    private static String countThreads() {
+        Thread[] threads = new Thread[Thread.activeCount() * 2 + 8];
+        int n = Thread.enumerate(threads);
+        int pipeline = 0;
+        for (int i = 0; i < n; i++) {
+            if (threads[i].getName().startsWith("datapipeline-")) pipeline++;
+        }
+        return n + "  (" + pipeline + " pipeline)";
     }
 }
