@@ -8,4 +8,14 @@
   </parent>
   <artifactId>com.example.datapipeline.demo</artifactId>
   <packaging>eclipse-plugin</packaging>
+  <dependencies>
+    <!-- Satisfies Import-Package: org.osgi.framework via pomDependencies=consider
+         (target platform from Maven — no p2 repository needed). -->
+    <dependency>
+      <groupId>org.osgi</groupId>
+      <artifactId>osgi.core</artifactId>
+      <version>6.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
 </project>

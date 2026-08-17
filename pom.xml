@@ -15,13 +15,8 @@
     <module>com.example.datapipeline.demo</module>
     <module>com.example.datapipeline.demo.launcher</module>
   </modules>
-  <repositories>
-    <repository>
-      <id>photon</id>
-      <layout>p2</layout>
-      <url>https://download.eclipse.org/releases/photon</url>
-    </repository>
-  </repositories>
+  <!-- No p2 repositories: the target platform is resolved from Maven
+       (pomDependencies=consider), so a Maven mirror like Nexus suffices. -->
   <build>
     <plugins>
       <plugin>
@@ -35,6 +30,7 @@
         <artifactId>target-platform-configuration</artifactId>
         <version>${tycho.version}</version>
         <configuration>
+          <pomDependencies>consider</pomDependencies>
           <environments>
             <environment><os>macosx</os><ws>cocoa</ws><arch>x86_64</arch></environment>
           </environments>

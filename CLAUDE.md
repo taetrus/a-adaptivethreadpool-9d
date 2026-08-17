@@ -15,6 +15,8 @@ mvn -q -pl com.example.datapipeline.tests -am test -Dtest=ResequencerTest -Dfail
 
 `-DfailIfNoTests=false` is required for single-test runs because the reactor includes the bundle module, which has no surefire tests.
 
+The target platform is resolved entirely from Maven (`pomDependencies=consider`, no p2 repositories) — the build works offline / behind a Maven-only mirror like Nexus. The demo bundle's `org.osgi.framework` import is satisfied by a provided-scope `org.osgi:osgi.core` dependency; if a bundle gains a new external package import, add a Maven dependency that is an OSGi bundle exporting it (never a p2 repo).
+
 No Java 9+ APIs anywhere in the bundle. Zero third-party runtime dependencies — JUnit 4.13.2 is test-scope only. Some tests are timing-based (PeriodicUiTest, LifecycleTest); a lone failure there is worth one re-run before investigating.
 
 ## Architecture
