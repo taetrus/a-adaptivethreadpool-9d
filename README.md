@@ -104,6 +104,120 @@ Only meaningful with `UiUpdateMode.periodic(...)`. When enabled, the periodic ti
 
 Good for UI-driven processing where you want exactly one computation per frame, always on the freshest data (especially with `LATEST_WINS`).
 
+## Real-World Use Cases
+
+Each scenario below maps a concrete problem to a full pipeline configuration and explains why every knob is set the way it is.
+
+### 1. Live market-data ticker (price label)
+
+**Problem:** A feed pushes quote updates hundreds of times per second. The UI shows the *current* price; a quote that has already been superseded is worthless. Processing (enriching the quote, formatting) takes a few milliseconds.
+
+```java
+DataPipeline<Quote, String> pipeline = DataPipeline.<Quote, String>builder()
+    .processor(q -> format(enrich(q)))           // a few ms of work per quote
+    .uiConsumer(priceLabel::setText)
+    .overflowPolicy(OverflowPolicy.LATEST_WINS)  // stale quotes are worthless — skip them
+    .executionMode(ExecutionMode.SEQUENTIAL)     // one item pending at most, one thread suffices
+    .uiUpdateMode(UiUpdateMode.immediate())      // show a new price the moment it's ready
+    .build();
+
+feedListener.onQuote(pipeline::submit);          // called from the feed's own thread — never blocks
+```
+
+**Why this shape:** `LATEST_WINS` gives you natural load-shedding — if the processor is busy when three quotes arrive, only the newest is processed and the two stale ones evaporate without any queue growth. `SEQUENTIAL` is correct because there is never more than one pending item, so a pool could not help (the builder would warn and degrade anyway). `immediate()` keeps latency minimal, and its built-in coalescing means a slow EDT (say, during a repaint storm) never accumulates runnables — it just skips to the newest price. Total threads: 1.
+
+### 2. Order-book depth view (mergeable deltas)
+
+**Problem:** The feed sends *incremental* book updates (price level added/removed). Skipping one corrupts the picture — but two consecutive deltas can be merged into one. The UI redraws the book at most a few times per second; redrawing faster is wasted paint.
+
+```java
+DataPipeline<BookDelta, BookModel> pipeline = DataPipeline.<BookDelta, BookModel>builder()
+    .processor(delta -> book.apply(delta))          // apply merged delta, snapshot the model
+    .uiConsumer(bookPanel::render)
+    .overflowPolicy(OverflowPolicy.CONFLATE)
+    .conflator(BookDelta::merge)                    // two pending deltas combine into one
+    .uiUpdateMode(UiUpdateMode.periodic(250))       // 4 redraws/sec is plenty for a depth view
+    .build();
+```
+
+**Why this shape:** `CONFLATE` is the middle ground between PROCESS_ALL (no loss, but a backlog) and LATEST_WINS (loss): nothing is lost *semantically* because the conflator folds pending deltas together while the processor is busy. `periodic(250)` decouples the redraw rate from the update rate — between ticks, results just overwrite the latest-result slot. Keep the conflator cheap and total: it runs on the source's submit path (under the intake lock), and if it throws, the older delta is discarded in favor of the newest.
+
+### 3. Telemetry decoder — every frame matters, order matters, CPU-bound
+
+**Problem:** A device streams binary frames at high rate. Every frame must be decoded (dropping one loses data), decoded frames must reach the log view in wire order, and decoding is CPU-heavy enough that one core can't keep up.
+
+```java
+DataPipeline<Frame, Record> pipeline = DataPipeline.<Frame, Record>builder()
+    .processor(codec::decode)                          // CPU-bound, pure function
+    .uiConsumer(logTable::append)
+    .overflowPolicy(OverflowPolicy.PROCESS_ALL)
+    .bufferCapacity(8192)                              // absorb bursts of this size
+    .onOverflow(f -> alertPanel.overrun(f))            // overload is a reportable event here
+    .executionMode(ExecutionMode.parallelOrdered(4))   // 4 cores decode concurrently
+    .uiUpdateMode(UiUpdateMode.periodic(100))          // the table repaints 10x/sec
+    .build();
+```
+
+**Why this shape:** `PROCESS_ALL` + `parallelOrdered(4)` is the only combination where a pool genuinely helps — the bounded buffer holds a real backlog and four workers drain it concurrently, while the resequencer guarantees the log view sees records in wire order even when frame N+3 decodes before frame N. Size `bufferCapacity` to your worst expected *burst*, not your average rate: the buffer exists to smooth bursts, and sustained overload will drop oldest frames — which is why `onOverflow` here feeds an alert rather than the default log line. A failed decode is routed to `onError` and its sequence slot is released, so one corrupt frame never stalls the ordered stream.
+
+### 4. Sensor dashboard at a fixed frame rate (compute-per-frame)
+
+**Problem:** An accelerometer delivers samples at 5 kHz, but the dashboard shows a derived value (say an RMS window or FFT peak) at 10 Hz. Computing the derived value 5,000 times per second to display 10 of them is a 99.8% waste of CPU.
+
+```java
+DataPipeline<Sample, Reading> pipeline = DataPipeline.<Sample, Reading>builder()
+    .processor(analyzer::compute)                   // expensive; runs 10x/sec, not 5000x
+    .uiConsumer(gauge::setReading)
+    .overflowPolicy(OverflowPolicy.LATEST_WINS)
+    .uiUpdateMode(UiUpdateMode.periodic(100))       // 10 frames per second
+    .processOnlyOnTick(true)                        // THE key setting: no work between frames
+    .build();
+```
+
+**Why this shape:** `processOnlyOnTick(true)` inverts the pipeline — nothing is processed between ticks; each tick pulls the freshest sample from the intake, computes once, and paints. Combined with `LATEST_WINS`, this is the maximum-economy configuration: exactly one computation per displayed frame, always on the newest data, on a single scheduler thread (no worker or dispatcher exists at all — total pipeline threads: 1). If the derived value needs to *see* every sample (a true windowed RMS), keep the cheap accumulation in your own sampler and submit the accumulated window instead — or use CONFLATE with a merging window type, as in use case 2.
+
+### 5. Progress/status aggregation from background jobs
+
+**Problem:** Dozens of background tasks report progress concurrently. The status bar shows a summary. Updates are frequent, cheap to merge, and only the aggregate matters.
+
+```java
+DataPipeline<ProgressEvent, String> pipeline = DataPipeline.<ProgressEvent, String>builder()
+    .processor(agg::summarize)                       // cheap — this pipeline is about batching, not CPU
+    .uiConsumer(statusBar::setText)
+    .overflowPolicy(OverflowPolicy.CONFLATE)
+    .conflator(ProgressEvent::combine)               // e.g. keep max percentage per job id
+    .uiUpdateMode(UiUpdateMode.periodic(200))
+    .build();
+
+// every worker thread reports through the same pipeline — submit() is thread-safe and non-blocking
+executor.execute(() -> { ...; pipeline.submit(new ProgressEvent(jobId, pct)); ... });
+```
+
+**Why this shape:** `submit()` is safe from any number of threads, so the pipeline doubles as the funnel that gets you from "N threads all touching the EDT" to "one throttled EDT writer". Even with a trivial processor this is worth a pipeline: the conflator batches concurrent reports and `periodic(200)` caps status-bar churn at 5 updates/sec regardless of how noisy the workers get.
+
+### Using pipelines inside OSGi (all cases)
+
+In a DS component, obtain pipelines through the `PipelineFactory` service instead of calling `build()` directly — the factory closes everything it built when the bundle deactivates, so a bundle restart can never leak the pipeline's threads:
+
+```java
+@Component
+public final class TickerView {
+    private PipelineFactory factory;    // injected via DS reference
+    private DataPipeline<Quote, String> pipeline;
+
+    void activate() {
+        pipeline = factory.build(DataPipeline.<Quote, String>builder()
+                .processor(...).uiConsumer(...)
+                .overflowPolicy(OverflowPolicy.LATEST_WINS));
+    }
+    void deactivate() {
+        pipeline.close();               // idempotent — fine even though the factory also closes it
+    }
+}
+```
+
+**Choosing a policy — rule of thumb:** ask what a missed item costs. Worthless when superseded → `LATEST_WINS` (cases 1, 4). Mergeable → `CONFLATE` (cases 2, 5). Irreplaceable → `PROCESS_ALL`, and then ask whether one core keeps up: yes → `SEQUENTIAL`, no → `parallelOrdered(N)` (case 3).
+
 ## Degenerate Configurations and Warnings
 
 The builder logs a warning and adjusts behavior automatically in the following cases:
